@@ -1,5 +1,6 @@
 package com.example.hotkey.likes;
 
+import com.example.hotkey.monitor.HotKeyTracker;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -11,10 +12,15 @@ public class LikesService {
 
     private final StringRedisTemplate redis;
     private final MeterRegistry meterRegistry;
+    private final HotKeyTracker hotKeyTracker;
 
-    public LikesService(StringRedisTemplate redis, MeterRegistry meterRegistry) {
+    public LikesService(
+            StringRedisTemplate redis,
+            MeterRegistry meterRegistry,
+            HotKeyTracker hotKeyTracker) {
         this.redis = redis;
         this.meterRegistry = meterRegistry;
+        this.hotKeyTracker = hotKeyTracker;
     }
 
     // One Redis key per video for now. increment() maps to INCR — atomic under concurrency.
@@ -22,8 +28,8 @@ public class LikesService {
         String key = "likes:video:" + videoId;
         Long value = redis.opsForValue().increment(key);
         if (value != null) {
-            // Tag "video" lets us see which ids get the most writes (Step 7 will use this idea).
             meterRegistry.counter(INCREMENT_METRIC, "video", videoId).increment();
+            hotKeyTracker.recordWrite(videoId);
         }
         return value != null ? value : 0L;
     }
