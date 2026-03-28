@@ -20,19 +20,22 @@ public class HotKeyTracker {
 
     private static final Logger log = LoggerFactory.getLogger(HotKeyTracker.class);
 
+    private final int thresholdWrites;
+
     private final ConcurrentHashMap<String, LongAdder> windowCounts = new ConcurrentHashMap<>();
     private final AtomicReference<List<HotKeySnapshot>> lastHot = new AtomicReference<>(List.of());
-    private final AtomicReference<Map<String, Long>> lastWindowWrites = new AtomicReference<>(Map.of());
+    private final AtomicReference<Map<String, Long>> lastBusyWindowWrites = new AtomicReference<>(Map.of());
     private final AtomicLong windowsClosed = new AtomicLong();
+    private final AtomicLong lastBusySnapshotAtEpochMs = new AtomicLong(0L);
 
-    @Value("${app.hotkey.threshold-writes:100}")
-    private int thresholdWrites;
+    public HotKeyTracker(@Value("${app.hotkey.threshold-writes:100}") int thresholdWrites) {
+        this.thresholdWrites = thresholdWrites;
+    }
 
     public void recordWrite(String videoId) {
         windowCounts.computeIfAbsent(videoId, k -> new LongAdder()).increment();
     }
 
-    // First tick after one full window so an early burst is not wiped by an immediate empty close.
     @Scheduled(
             fixedRateString = "${app.hotkey.window-ms:10000}",
             initialDelayString = "${app.hotkey.window-ms:10000}")
@@ -48,14 +51,20 @@ public class HotKeyTracker {
                 hot.add(new HotKeySnapshot(entry.getKey(), count));
             }
         }
-        lastWindowWrites.set(Map.copyOf(tally));
-        lastHot.set(List.copyOf(hot));
+
+        if (!tally.isEmpty()) {
+            lastBusyWindowWrites.set(Map.copyOf(tally));
+            lastHot.set(List.copyOf(hot));
+            lastBusySnapshotAtEpochMs.set(System.currentTimeMillis());
+        }
+
         long n = windowsClosed.incrementAndGet();
         log.info(
-                "Hot-key window #{} closed: writesLastWindow={}, threshold={}",
+                "Hot-key window #{} closed (tally this close={}, threshold={}, snapshot updated={})",
                 n,
                 tally,
-                thresholdWrites);
+                thresholdWrites,
+                !tally.isEmpty());
         if (!hot.isEmpty()) {
             log.warn("Hot keys this window: {}", hot);
         }
@@ -65,8 +74,19 @@ public class HotKeyTracker {
         return lastHot.get();
     }
 
-    public Map<String, Long> getLastWindowWrites() {
-        return lastWindowWrites.get();
+    public Map<String, Long> getCurrentWindowWrites() {
+        Map<String, Long> map = new LinkedHashMap<>();
+        windowCounts.forEach((videoId, adder) -> {
+            long s = adder.sum();
+            if (s > 0) {
+                map.put(videoId, s);
+            }
+        });
+        return map;
+    }
+
+    public Map<String, Long> getLastBusyWindowWrites() {
+        return lastBusyWindowWrites.get();
     }
 
     public long getWindowsClosed() {
@@ -75,5 +95,9 @@ public class HotKeyTracker {
 
     public int getThresholdWrites() {
         return thresholdWrites;
+    }
+
+    public long getLastBusySnapshotAtEpochMs() {
+        return lastBusySnapshotAtEpochMs.get();
     }
 }
