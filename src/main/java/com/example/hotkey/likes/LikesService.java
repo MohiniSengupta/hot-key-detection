@@ -18,4 +18,14 @@ public class LikesService {
         Long value = redis.opsForValue().increment(key);
         return value != null ? value : 0L;
     }
+
+    // Redis GET — read-only; no key yet => 0.
+    public long getLikes(String videoId) {
+        String key = "likes:video:" + videoId;
+        String raw = redis.opsForValue().get(key);
+        if (raw == null || raw.isEmpty()) {
+            return 0L;
+        }
+        return Long.parseLong(raw);
+    }
 }
